@@ -459,6 +459,34 @@ app.post('/chat', async (req, res) => {
       console.error('Extraction error:', e);
     }
 
+    // If MAS not in current message, scan previous assistant messages for it
+    if (!extraction.mas_ms) {
+      for (let i = messages.length - 2; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.role === 'assistant') {
+          const match = msg.content.match(/([0-9]+[.][0-9]+) m\/s/);
+          if (match) {
+            extraction.mas_ms = parseFloat(match[1]);
+            break;
+          }
+        }
+      }
+    }
+
+    // If session number not in current message, scan previous user messages for it
+    if (!extraction.session_number) {
+      for (let i = messages.length - 2; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.role === 'user') {
+          const match = msg.content.match(/MAS\s*(\d+)/i);
+          if (match) {
+            extraction.session_number = parseInt(match[1]);
+            break;
+          }
+        }
+      }
+    }
+
     // Step 2: Build context with calculated data
     const contextParts = [`User said: "${lastUserMsg.content}"\n`];
 

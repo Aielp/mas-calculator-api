@@ -476,6 +476,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // Session calculation
+    let diagramMarkers = []; // collected separately, injected after Claude response
     if (extraction.session_number) {
       if (extraction.mas_ms) {
         const session = buildSession(extraction.session_number, extraction.mas_ms);
@@ -483,7 +484,8 @@ app.post('/chat', async (req, res) => {
           contextParts.push(`\n${session.name}:`);
           session.blocks.forEach(b => {
             if (b.label === 'diagram') {
-              contextParts.push(b.detail);
+              // Don't send diagram to Claude — collect it to inject after
+              diagramMarkers.push(b.detail);
             } else {
               contextParts.push(`- ${b.label}: ${b.detail}`);
             }
@@ -518,6 +520,11 @@ app.post('/chat', async (req, res) => {
     let reply = finalResp.content[0].text;
     reply = reply.replace(/rectangular track session/gi, 'rectangle session');
     reply = reply.replace(/track session/gi, 'session');
+
+    // Append diagram markers — injected after Claude's text, not via Claude
+    if (diagramMarkers.length > 0) {
+      reply = reply + '\n\n' + diagramMarkers.join('\n\n');
+    }
 
     res.json({ reply });
 

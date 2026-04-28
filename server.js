@@ -65,7 +65,7 @@ function calculateRectangleSession(mas_ms, sessionNum) {
     session: session.name,
     longSide,
     shortSide,
-    duration,
+    duration: session.duration,
     sets: session.sets,
     rest: session.rest,
     fastPercent: session.fast,
@@ -76,14 +76,15 @@ function calculateRectangleSession(mas_ms, sessionNum) {
 // Format MAS output
 function formatMAS(mas_ms) {
   const mas_kmh = (mas_ms * 3.6).toFixed(2);
-  const pace_per_km = ((1000 / mas_ms) / 60).toFixed(2); // minutes
-  const pace_seconds = Math.round((1000 / mas_ms) % 60);
+  const pace_seconds = Math.round(1000 / mas_ms); // total seconds per km
+  const pace_min = Math.floor(pace_seconds / 60);
+  const pace_sec = pace_seconds % 60;
   
   return {
     ms: mas_ms.toFixed(2),
     kmh: mas_kmh,
-    pace_per_km_min: Math.floor(1000 / mas_ms / 60),
-    pace_per_km_sec: pace_seconds
+    pace_per_km_min: pace_min,
+    pace_per_km_sec: pace_sec
   };
 }
 
@@ -116,28 +117,48 @@ app.post('/chat', async (req, res) => {
 
     // Step 2: If we have MAS and session number, calculate targets
     let calculatedTargets = null;
+    let masFormatted = null;
+    
+    if (extraction.mas_ms) {
+      masFormatted = formatMAS(extraction.mas_ms);
+    }
+    
     if (extraction.mas_ms && extraction.session_number) {
       calculatedTargets = calculateRectangleSession(extraction.mas_ms, extraction.session_number);
     }
 
     // Step 3: Create context for Claude to generate the response
-    const contextMessage = {
-      role: 'user',
-      content: `User said: "${lastUserMsg.content}"
+    let contextText = `User said: "${lastUserMsg.content}"
 
 Extracted data:
 - MAS: ${extraction.mas_ms ? extraction.mas_ms + ' m/s' : 'not provided'}
 - Session: ${extraction.session_number ? 'MAS ' + extraction.session_number : 'not specified'}
 - Units preference: ${extraction.units_preference}
-${extraction.clarification_needed ? `- Clarification needed: ${extraction.clarification_needed}` : ''}
+${extraction.clarification_needed ? `- Clarification needed: ${extraction.clarification_needed}` : ''}`;
 
-${calculatedTargets ? `Calculated session targets:
+    if (masFormatted) {
+      contextText += `
+
+MAS formatted:
+- ${masFormatted.ms} m/s
+- ${masFormatted.kmh} km/h
+- ${masFormatted.pace_per_km_min}:${String(masFormatted.pace_per_km_sec).padStart(2, '0')} per km`;
+    }
+
+    if (calculatedTargets) {
+      contextText += `
+
+Calculated session targets:
 - Long side (fast): ${calculatedTargets.longSide}m at ${calculatedTargets.fastPercent}% MAS
 - Short side (float): ${calculatedTargets.shortSide}m at ${calculatedTargets.floatPercent}% MAS
 - Work duration: ${calculatedTargets.duration}s per repetition
 - Sets: ${calculatedTargets.sets}
-- Rest between sets: ${calculatedTargets.rest}min
-` : ''}
+- Rest between sets: ${calculatedTargets.rest}min`;
+    }
+
+    const contextMessage = {
+      role: 'user',
+      content: contextText + `
 
 Now respond to the user naturally. If targets were calculated, explain how to use them. If MAS was provided, also show it in different formats.`
     };

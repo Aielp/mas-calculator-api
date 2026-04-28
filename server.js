@@ -62,20 +62,8 @@ function calcTabata(mas_ms, pct, setMinutes) {
 // ─────────────────────────────────────────────
 
 function rectangleDiagram(longSide, shortSide) {
-  return `
-Cone layout:
-
-A ──── ${longSide}m ──── B
-|                        |
-${shortSide}m          ${shortSide}m
-|                        |
-D ──── ${longSide}m ──── C
-
-A→B = long side (fast, 15 sec)
-B→C = short side (float, 15 sec)
-C→D = long side (fast, 15 sec)
-D→A = short side (float, 15 sec)
-4 cones only — run continuously around the rectangle`;
+  // Return a marker tag the frontend replaces with an SVG
+  return '[RECTANGLE_DIAGRAM:' + longSide + ':' + shortSide + ']';
 }
 
 // ─────────────────────────────────────────────

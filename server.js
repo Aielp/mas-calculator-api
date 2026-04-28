@@ -414,7 +414,18 @@ Examples:
 -> {"mas_ms": 4.4, "session_number": null, "units_preference": "metric", "is_squad": false, "athletes": [], "progress": {"old_mas": 4.0, "new_mas": 4.4}, "clarification_needed": null}
 
 "What is MAS 7?"
--> {"mas_ms": null, "session_number": 7, "units_preference": "metric", "is_squad": false, "athletes": [], "progress": null, "clarification_needed": "Need MAS value to calculate targets"}`;
+-> {"mas_ms": null, "session_number": 7, "units_preference": "metric", "is_squad": false, "athletes": [], "progress": null, "clarification_needed": "Need MAS value to calculate targets"}
+
+"Now give me MAS 20"
+-> {"mas_ms": null, "session_number": 20, "units_preference": "metric", "is_squad": false, "athletes": [], "progress": null, "clarification_needed": null}
+
+"And MAS 20"
+-> {"mas_ms": null, "session_number": 20, "units_preference": "metric", "is_squad": false, "athletes": [], "progress": null, "clarification_needed": null}
+
+"What about MAS 14?"
+-> {"mas_ms": null, "session_number": 14, "units_preference": "metric", "is_squad": false, "athletes": [], "progress": null, "clarification_needed": null}
+
+IMPORTANT: Always extract the session number from the CURRENT message if any number follows "MAS". Short follow-ups like "now give me MAS 20", "and MAS 20", "what about MAS 14" always contain a valid session number.`;
 
 // ─────────────────────────────────────────────
 // RESPONSE SYSTEM PROMPT

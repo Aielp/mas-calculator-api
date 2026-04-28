@@ -22,6 +22,7 @@ Your ONLY job: identify two things:
 If the user provides distance and time, calculate MAS:
 - MAS (m/s) = distance_in_metres ÷ time_in_seconds
 - Convert any units to metres and seconds first
+- Conversion examples: 1200m in 5 minutes = 1200m ÷ 300s = 4.0 m/s
 
 Output ONLY a JSON object with this exact format (no other text):
 {
@@ -35,7 +36,10 @@ Example user input: "I ran 1200m in 5 minutes"
 Example output: {"mas_ms": 4.0, "session_number": null, "units_preference": "metric", "clarification_needed": null}
 
 Example user input: "Calculate targets for MAS 12, my MAS is 4.5 m/s"
-Example output: {"mas_ms": 4.5, "session_number": 12, "units_preference": "metric", "clarification_needed": null}`;
+Example output: {"mas_ms": 4.5, "session_number": 12, "units_preference": "metric", "clarification_needed": null}
+
+Example user input: "I ran 1200m in 5 minutes, calculate MAS 12"
+Example output: {"mas_ms": 4.0, "session_number": 12, "units_preference": "metric", "clarification_needed": null}`;
 
 // Session definitions with intensity % values
 const SESSIONS = {
@@ -93,7 +97,8 @@ app.post('/chat', async (req, res) => {
   try {
     const { messages } = req.body;
     
-    // Step 1: Extract MAS and session from latest user message
+    // Step 1: Extract MAS and session from latest user message ONLY
+    // Don't include chat history in extraction - it causes confusion
     const lastUserMsg = messages.filter(m => m.role === 'user').pop();
     if (!lastUserMsg) {
       return res.status(400).json({ error: 'No user message found' });
@@ -105,7 +110,7 @@ app.post('/chat', async (req, res) => {
         model: 'claude-sonnet-4-20250514',
         max_tokens: 200,
         system: EXTRACTION_PROMPT,
-        messages: [{ role: 'user', content: lastUserMsg.content }]
+        messages: [{ role: 'user', content: lastUserMsg.content }] // Only current message, not history
       });
       
       const jsonStr = extractionResp.content[0].text.trim();
@@ -175,17 +180,23 @@ Now respond to the user naturally. If targets were calculated, explain how to us
       system: `You are MAS Session Calculator for Prepare to Perform (preparetoperform.com.au).
       
 Your job: respond naturally to the user about their MAS training. 
-- If MAS and session were extracted, explain the session structure and targets clearly.
+- If MAS and session were extracted and calculated, present the session structure and targets clearly without asking for confirmation.
 - If MAS was provided, show it in m/s, km/h, and pace per km.
-- If clarification was needed, ask the user politely.
+- Only ask for clarification if the "clarification_needed" field indicates something is genuinely ambiguous.
 - Keep responses clear, concise, practical.
 - Use bullet points for targets and session structure.
+- Never mention the word "track" in descriptions.
 
-DO NOT do any math yourself. The numbers in the context above are already calculated. Just present them clearly.`,
+DO NOT do any math yourself. The numbers in the context above are already calculated. Just present them clearly and helpfully.`,
       messages: responseMessages
     });
 
-    const reply = finalResp.content[0].text;
+    let reply = finalResp.content[0].text;
+    // Clean up language - remove "rectangular track" references
+    reply = reply.replace(/rectangular track session/gi, 'session');
+    reply = reply.replace(/rectangular track/gi, 'rectangle');
+    reply = reply.replace(/track session/gi, 'session');
+    
     res.json({ reply });
 
   } catch (err) {

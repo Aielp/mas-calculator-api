@@ -572,6 +572,55 @@ app.post('/chat', async (req, res) => {
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
+// ─────────────────────────────────────────────
+// RUNNING SPEED CALCULATOR ENDPOINT
+// ─────────────────────────────────────────────
 
+const SPEED_SYSTEM = `You are a running speed calculator. The user gives you a running scenario in plain English.
+Extract the numbers, calculate ALL of the following metrics, then return ONLY valid JSON — no prose, no markdown, no backticks.
+
+JSON format:
+{
+  "mps": number,
+  "kmh": number,
+  "mph": number,
+  "minPerKm": string,
+  "minPerMile": string,
+  "context": string
+}
+
+Rules:
+- mps = metres per second (2 decimal places)
+- kmh = kilometres per hour (2 decimal places)
+- mph = miles per hour (2 decimal places)
+- minPerKm = pace in "M:SS /km" format
+- minPerMile = pace in "M:SS /mile" format
+- context = one friendly sentence summarising the result and what it compares to
+- If the user gives pace or speed to convert, derive all other formats from that
+- If input cannot be interpreted, return: {"error": "brief explanation"}
+- Return ONLY the JSON object. No other text.`;
+
+app.post('/running-speed', async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query) return res.status(400).json({ error: 'No query provided' });
+
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 500,
+      system: SPEED_SYSTEM,
+      messages: [{ role: 'user', content: query }]
+    });
+
+    const raw = response.content[0].text.trim();
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const result = JSON.parse(clean);
+    res.json(result);
+
+  } catch (err) {
+    console.error('Speed calc error:', err);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.listen(process.env.PORT || 3000, () => console.log('MAS API running'));

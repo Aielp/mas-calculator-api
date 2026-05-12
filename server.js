@@ -622,5 +622,334 @@ app.post('/running-speed', async (req, res) => {
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
+// ─────────────────────────────────────────────
+// WENDLER CALCULATOR
+// Drop these helpers above your route handlers (alongside the MAS helpers),
+// and the two route handlers anywhere with the others.
+// ─────────────────────────────────────────────
+
+// ─── HELPERS ───────────────────────────────────
+
+function ceilTo(weight, increment) {
+  return Math.ceil(weight / increment) * increment;
+}
+
+// Epley formula: e1RM = weight × (1 + 0.0333 × reps)
+function epley(weight, reps) {
+  return weight * (1 + 0.0333 * reps);
+}
+
+// Session percentage templates (all % of Training Max)
+// AMRAP minimum reps shown for clarity in the prescription
+const WENDLER_TEMPLATES = {
+  week1: {
+    name: 'Week 1 — 5/5/5+',
+    description: 'Volume week. Build base reps, push the final AMRAP set.',
+    warmups: [
+      { pct: 40, reps: 5 },
+      { pct: 50, reps: 5 },
+      { pct: 60, reps: 3 }
+    ],
+    working: [
+      { pct: 65, reps: 5, amrap: false },
+      { pct: 75, reps: 5, amrap: false },
+      { pct: 85, reps: 5, amrap: true, minReps: 5, capReps: 20 }
+    ]
+  },
+  week2: {
+    name: 'Week 2 — 3/3/3+',
+    description: 'Intensity week. Heavier loads, fewer reps.',
+    warmups: [
+      { pct: 40, reps: 5 },
+      { pct: 50, reps: 5 },
+      { pct: 60, reps: 3 }
+    ],
+    working: [
+      { pct: 70, reps: 3, amrap: false },
+      { pct: 80, reps: 3, amrap: false },
+      { pct: 90, reps: 3, amrap: true, minReps: 3, capReps: 20 }
+    ]
+  },
+  week3: {
+    name: 'Week 3 — 5/3/1+',
+    description: 'Peak week. Top set is the AMRAP — the heart of 5/3/1.',
+    warmups: [
+      { pct: 40, reps: 5 },
+      { pct: 50, reps: 5 },
+      { pct: 60, reps: 3 }
+    ],
+    working: [
+      { pct: 75, reps: 5, amrap: false },
+      { pct: 85, reps: 3, amrap: false },
+      { pct: 95, reps: 1, amrap: true, minReps: 1, capReps: 20 }
+    ]
+  },
+  deload: {
+    name: 'Deload — 5/5/5',
+    description: 'Recovery week. No AMRAP. Move well, recover, return.',
+    warmups: [
+      { pct: 40, reps: 5 },
+      { pct: 50, reps: 5 },
+      { pct: 60, reps: 3 }
+    ],
+    working: [
+      { pct: 40, reps: 5, amrap: false },
+      { pct: 50, reps: 5, amrap: false },
+      { pct: 60, reps: 5, amrap: false }
+    ]
+  },
+  endurance: {
+    name: 'Strength Endurance — 4×12',
+    description: 'Conditioning and muscular endurance. Three warm-ups then one working set of 12+ AMRAP at 70% TM.',
+    warmups: [
+      { pct: 40, reps: 12 },
+      { pct: 50, reps: 12 },
+      { pct: 60, reps: 12 }
+    ],
+    working: [
+      { pct: 70, reps: 12, amrap: true, minReps: 12, capReps: 30 }
+    ]
+  },
+  foundation: {
+    name: 'Foundation — 3×8',
+    description: 'Hypertrophy-leaning base scheme. Three warm-ups then one working set of 8+ AMRAP at 70% TM.',
+    warmups: [
+      { pct: 40, reps: 8 },
+      { pct: 50, reps: 8 },
+      { pct: 60, reps: 8 }
+    ],
+    working: [
+      { pct: 70, reps: 8, amrap: true, minReps: 8, capReps: 25 }
+    ]
+  }
+};
+
+// Build a session prescription from TM
+function buildWendlerSession(sessionKey, trainingMax, rounding) {
+  const template = WENDLER_TEMPLATES[sessionKey];
+  if (!template) return null;
+
+  const sets = [];
+
+  template.warmups.forEach((s, i) => {
+    sets.push({
+      label: `Warm-up ${i + 1}`,
+      pct: s.pct,
+      weight: ceilTo(trainingMax * (s.pct / 100), rounding),
+      reps: String(s.reps),
+      amrap: false
+    });
+  });
+
+  template.working.forEach((s, i) => {
+    const setNum = template.warmups.length + i + 1;
+    let repsLabel;
+    if (s.amrap) {
+      // Wendler convention: write "5+" for AMRAP starting at min reps
+      repsLabel = `${s.minReps}+`;
+    } else {
+      repsLabel = String(s.reps);
+    }
+    sets.push({
+      label: `Set ${setNum}`,
+      pct: s.pct,
+      weight: ceilTo(trainingMax * (s.pct / 100), rounding),
+      reps: repsLabel,
+      amrap: !!s.amrap,
+      minReps: s.minReps || null,
+      capReps: s.capReps || null
+    });
+  });
+
+  return {
+    sessionKey,
+    name: template.name,
+    description: template.description,
+    sets,
+    notes: template.working.some(s => s.amrap)
+      ? `Final set: as many reps as possible with good form. Stop if you reach ${template.working.find(s => s.amrap).capReps} reps — that means the TM is too light and should be increased next cycle.`
+      : 'No AMRAP this session — execute as prescribed.'
+  };
+}
+
+// ─── MAIN ENDPOINT: /wendler ─────────────────
+
+app.post('/wendler', (req, res) => {
+  try {
+    const {
+      mode,              // 'e1rm' or 'topSet'
+      e1rm,              // number, used when mode === 'e1rm'
+      topSetWeight,      // number, used when mode === 'topSet'
+      topSetReps,        // number, used when mode === 'topSet'
+      tmPercent,         // 80–95
+      rounding,          // 1, 2.5, or 5
+      session            // 'week1' | 'week2' | 'week3' | 'deload' | 'endurance' | 'foundation'
+    } = req.body;
+
+    // Validate inputs
+    if (!session || !WENDLER_TEMPLATES[session]) {
+      return res.status(400).json({ error: 'Invalid or missing session. Use: week1, week2, week3, deload, endurance, foundation.' });
+    }
+    const tmPct = Number(tmPercent);
+    if (!tmPct || tmPct < 80 || tmPct > 95) {
+      return res.status(400).json({ error: 'tmPercent must be a number between 80 and 95.' });
+    }
+    const roundIncrement = Number(rounding);
+    if (![1, 2.5, 5].includes(roundIncrement)) {
+      return res.status(400).json({ error: 'rounding must be 1, 2.5, or 5.' });
+    }
+
+    // Derive e1RM
+    let derivedE1RM;
+    if (mode === 'topSet') {
+      const w = Number(topSetWeight);
+      const r = Number(topSetReps);
+      if (!w || !r || w <= 0 || r <= 0 || r > 30) {
+        return res.status(400).json({ error: 'topSet mode requires valid topSetWeight and topSetReps (1–30).' });
+      }
+      derivedE1RM = epley(w, r);
+    } else if (mode === 'e1rm') {
+      const e = Number(e1rm);
+      if (!e || e <= 0) {
+        return res.status(400).json({ error: 'e1rm mode requires a valid e1rm value.' });
+      }
+      derivedE1RM = e;
+    } else {
+      return res.status(400).json({ error: 'mode must be "e1rm" or "topSet".' });
+    }
+
+    const trainingMax = derivedE1RM * (tmPct / 100);
+    const sessionData = buildWendlerSession(session, trainingMax, roundIncrement);
+
+    res.json({
+      e1rm: Math.round(derivedE1RM * 10) / 10,
+      trainingMax: Math.round(trainingMax * 10) / 10,
+      tmPercent: tmPct,
+      rounding: roundIncrement,
+      session: sessionData
+    });
+
+  } catch (err) {
+    console.error('Wendler error:', err);
+    res.status(500).json({ error: 'Something went wrong calculating the Wendler session.' });
+  }
+});
+
+// ─── COACHING ENDPOINT: /wendler/coach ───────
+
+const WENDLER_COACH_SYSTEM = `You are a strength coach providing brief, evidence-grounded feedback on a Wendler 5/3/1 AMRAP result for Prepare to Perform.
+
+You will be given pre-calculated data. Your job is to interpret it and write a short coaching note (3–5 sentences max).
+
+Tone: direct, knowledgeable, encouraging but never sycophantic. No emojis. No hedging.
+
+Use these progression rules (based on Wendler's published guidance, with research-aware nuance):
+- AMRAP reps below the minimum: TM is too heavy. Recommend dropping TM by 10% and rebuilding.
+- AMRAP reps at the minimum (e.g. 5 on Week 1, 3 on Week 2, 1 on Week 3): hold TM, no increase this cycle.
+- AMRAP reps 1–4 above minimum: standard progression (+2.5 kg upper body lifts, +5 kg lower body lifts).
+- AMRAP reps 5–9 above minimum: strong session — standard progression and consider Joker sets next cycle.
+- AMRAP reps 10+ above minimum, or capped at 20: TM is too light. Recommend increasing TM by 5–10% rather than the standard kg jump.
+
+Always end with one concrete next-cycle action.
+
+Output ONLY a plain text coaching note. No JSON. No markdown headers. No bullet lists unless the situation genuinely needs them.`;
+
+app.post('/wendler/coach', async (req, res) => {
+  try {
+    const {
+      lift,              // optional: 'squat' | 'bench' | 'deadlift' | 'press' | string
+      session,           // 'week1' | 'week2' | 'week3' | etc.
+      tmPercent,         // 80–95
+      previousE1RM,      // number
+      previousTM,        // number
+      topSetWeight,      // the prescribed AMRAP weight
+      topSetPct,         // the % of TM that top set represented (85, 90, 95, 70...)
+      repsAchieved,      // number of reps the user hit
+      minReps,           // the prescribed minimum for that AMRAP
+      capReps            // the cap (e.g. 20)
+    } = req.body;
+
+    // Validate
+    const reps = Number(repsAchieved);
+    const tsw = Number(topSetWeight);
+    if (!reps || reps <= 0 || !tsw || tsw <= 0) {
+      return res.status(400).json({ error: 'repsAchieved and topSetWeight are required.' });
+    }
+
+    // Recalculate e1RM from the actual AMRAP performance
+    const newE1RM = epley(tsw, reps);
+    const oldE1RM = Number(previousE1RM) || (tsw / ((Number(topSetPct) || 85) / 100)) / ((Number(tmPercent) || 85) / 100);
+    const deltaE1RM = newE1RM - oldE1RM;
+    const deltaPct = (deltaE1RM / oldE1RM) * 100;
+
+    // Classify
+    const minR = Number(minReps) || 1;
+    const cap = Number(capReps) || 20;
+    const repsAboveMin = reps - minR;
+    let classification;
+    let progressionAdvice;
+
+    if (reps < minR) {
+      classification = 'below_minimum';
+      progressionAdvice = 'Reduce TM by 10% and rebuild over the next cycle.';
+    } else if (repsAboveMin === 0) {
+      classification = 'at_minimum';
+      progressionAdvice = 'Hold TM at current level for the next cycle. No increase.';
+    } else if (repsAboveMin >= 1 && repsAboveMin <= 4) {
+      classification = 'standard';
+      progressionAdvice = 'Standard progression: +2.5 kg for upper body lifts (bench, press) or +5 kg for lower body lifts (squat, deadlift).';
+    } else if (repsAboveMin >= 5 && repsAboveMin <= 9) {
+      classification = 'strong';
+      progressionAdvice = 'Standard progression next cycle, and consider adding Joker sets to capitalise on momentum.';
+    } else {
+      classification = 'tm_too_light';
+      progressionAdvice = 'Increase TM by 5–10% next cycle rather than the standard small jump — the current TM is too conservative.';
+    }
+
+    const capped = reps >= cap;
+
+    // Build context for AI
+    const context = `
+Lift: ${lift || 'main lift'}
+Session: ${session}
+Top set: ${tsw} kg × ${reps} reps (${topSetPct}% of TM)
+Minimum prescribed reps: ${minR}
+Reps above minimum: ${repsAboveMin}
+Capped at ${cap}: ${capped ? 'yes' : 'no'}
+
+Previous e1RM: ${oldE1RM.toFixed(1)} kg
+New e1RM from this session: ${newE1RM.toFixed(1)} kg
+Change: ${deltaE1RM >= 0 ? '+' : ''}${deltaE1RM.toFixed(1)} kg (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}%)
+
+Classification: ${classification}
+Recommended progression: ${progressionAdvice}
+
+Write a 3–5 sentence coaching note interpreting this result. Reference the actual numbers. End with the concrete next-cycle action.`;
+
+    const aiResp = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 400,
+      system: WENDLER_COACH_SYSTEM,
+      messages: [{ role: 'user', content: context }]
+    });
+
+    const note = aiResp.content[0].text.trim();
+
+    res.json({
+      newE1RM: Math.round(newE1RM * 10) / 10,
+      previousE1RM: Math.round(oldE1RM * 10) / 10,
+      deltaKg: Math.round(deltaE1RM * 10) / 10,
+      deltaPct: Math.round(deltaPct * 10) / 10,
+      classification,
+      progressionAdvice,
+      cappedAtMax: capped,
+      coachNote: note
+    });
+
+  } catch (err) {
+    console.error('Wendler coach error:', err);
+    res.status(500).json({ error: 'Something went wrong generating the coaching note.' });
+  }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.listen(process.env.PORT || 3000, () => console.log('MAS API running'));
